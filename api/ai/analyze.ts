@@ -1,10 +1,52 @@
 import { createClient } from "@supabase/supabase-js";
-import type { AIAnalysisInput, AIAnalysisOutput, Profile } from "../../src/types";
-import { buildAnalysisPrompt } from "../../src/services/promptBuilder";
+
+type Plan = "free" | "pro";
+type Direction = "buy" | "sell";
+type AnalysisMethod = "scalping" | "smc" | "trend" | "breakout";
+type Confidence = "low" | "medium" | "high";
+
+interface Profile {
+  id: string;
+  email: string;
+  full_name: string;
+  plan: Plan;
+  ai_usage_weekly: number;
+  ai_usage_total: number;
+  ai_usage_reset_date: string;
+  created_at?: string;
+}
+
+interface AIAnalysisInput {
+  method: AnalysisMethod;
+  pair: string;
+  timeframe: string;
+  notes: string;
+  mode: "short-term" | "weekly";
+}
+
+interface AIAnalysisOutput {
+  bias: Direction;
+  entry: string;
+  stop_loss: string;
+  take_profit: string;
+  confidence: Confidence;
+  reason: string;
+}
 
 const WEEKLY_LIMIT = 3;
 const TOTAL_LIMIT = 12;
 const SIX_MONTHS_MS = 1000 * 60 * 60 * 24 * 183;
+const OPENAI_MODEL = process.env.OPENAI_MODEL || "gpt-4.1-mini";
+
+const basePrompt =
+  "You are TradeIntel, a professional trading decision-support analyst. Keep the answer short, practical, and return only valid JSON.";
+
+const methodPrompts: Record<AnalysisMethod, string> = {
+  scalping: "Analyze for short-term scalping. Prioritize immediate liquidity, volatility, and precise invalidation.",
+  smc: "Analyze using smart money concepts: liquidity sweeps, order blocks, imbalance, displacement, and structure.",
+  trend: "Analyze trend direction, pullbacks, continuation quality, and momentum confirmation.",
+  breakout: "Analyze breakout quality, retest conditions, trapped liquidity, and failure risk.",
+};
 
 const fallbackResult: AIAnalysisOutput = {
   bias: "buy",
@@ -16,70 +58,80 @@ const fallbackResult: AIAnalysisOutput = {
 };
 
 export default async function handler(request: any, response: any) {
-  if (request.method !== "POST") {
-    return json(response, { message: "Method not allowed" }, 405);
+  try {
+    if (request.method !== "POST") {
+      return json(response, { message: "Method not allowed" }, 405);
+    }
+
+    const supabaseUrl = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+    const anonKey = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+    if (!supabaseUrl || !anonKey || !serviceRoleKey) {
+      return json(response, { message: "Missing Supabase server environment variables" }, 500);
+    }
+
+    const authHeader = request.headers.authorization;
+    const accessToken = authHeader?.replace("Bearer ", "");
+    if (!accessToken) return json(response, { message: "Unauthorized. Please login first." }, 401);
+
+    const body = parseBody(request.body) as AIAnalysisInput;
+    const validationError = validateInput(body);
+    if (validationError) return json(response, { message: validationError }, 400);
+
+    const authClient = createClient(supabaseUrl, anonKey);
+    const adminClient = createClient(supabaseUrl, serviceRoleKey, {
+      auth: { persistSession: false, autoRefreshToken: false },
+    });
+
+    const { data: userData, error: userError } = await authClient.auth.getUser(accessToken);
+    if (userError || !userData.user) return json(response, { message: "Unauthorized. Please login again." }, 401);
+
+    const { data: profile, error: profileError } = await adminClient
+      .from("profiles")
+      .select("*")
+      .eq("id", userData.user.id)
+      .single();
+
+    if (profileError || !profile) {
+      return json(response, { message: "Profile not found. Sign out, sign up again, or check the Supabase profile trigger." }, 404);
+    }
+
+    const normalizedProfile = resetWeeklyIfNeeded(profile as Profile);
+    const createdAt = profile.created_at ? new Date(profile.created_at).getTime() : Date.now();
+    const trialExpired = Date.now() - createdAt > SIX_MONTHS_MS;
+
+    if (normalizedProfile.plan === "free") {
+      if (trialExpired) return json(response, { message: "AI trial expired. Upgrade to Pro." }, 402);
+      if (normalizedProfile.ai_usage_weekly >= WEEKLY_LIMIT) return json(response, { message: "Weekly AI trial limit reached. Upgrade to Pro." }, 402);
+      if (normalizedProfile.ai_usage_total >= TOTAL_LIMIT) return json(response, { message: "Total AI trial limit reached. Upgrade to Pro." }, 402);
+      if (body.mode === "weekly") return json(response, { message: "Weekly Analysis is available on Pro." }, 402);
+      if (body.method !== "scalping") return json(response, { message: "This AI method is available on Pro." }, 402);
+    }
+
+    const result = await runOpenAIAnalysis(body);
+
+    if (normalizedProfile.plan === "free") {
+      const usagePatch = {
+        ai_usage_weekly: normalizedProfile.ai_usage_weekly + 1,
+        ai_usage_total: normalizedProfile.ai_usage_total + 1,
+        ai_usage_reset_date: normalizedProfile.ai_usage_reset_date,
+      };
+      const { error: updateError } = await adminClient.from("profiles").update(usagePatch).eq("id", userData.user.id);
+      if (updateError) console.error("AI usage update failed", updateError.message);
+    }
+
+    return json(response, result);
+  } catch (error) {
+    console.error("AI analyze failed", error);
+    const message = error instanceof Error ? error.message : "AI analysis failed";
+    return json(response, { message }, 500);
   }
+}
 
-  const supabaseUrl = process.env.SUPABASE_URL;
-  const anonKey = process.env.VITE_SUPABASE_ANON_KEY;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-
-  if (!supabaseUrl || !anonKey || !serviceRoleKey) {
-    return json(response, fallbackResult);
-  }
-
-  const authHeader = request.headers.authorization;
-  const accessToken = authHeader?.replace("Bearer ", "");
-  if (!accessToken) return json(response, { message: "Unauthorized" }, 401);
-
-  const authClient = createClient(supabaseUrl, anonKey);
-  const adminClient = createClient(supabaseUrl, serviceRoleKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
-  });
-
-  const { data: userData, error: userError } = await authClient.auth.getUser(accessToken);
-  if (userError || !userData.user) return json(response, { message: "Unauthorized" }, 401);
-
-  const body = request.body as AIAnalysisInput;
-  const validationError = validateInput(body);
-  if (validationError) return json(response, { message: validationError }, 400);
-
-  const { data: profile, error: profileError } = await adminClient
-    .from("profiles")
-    .select("*")
-    .eq("id", userData.user.id)
-    .single();
-
-  if (profileError || !profile) return json(response, { message: "Profile not found" }, 404);
-
-  const normalizedProfile = resetWeeklyIfNeeded(profile as Profile);
-  const createdAt = profile.created_at ? new Date(profile.created_at).getTime() : Date.now();
-  const trialExpired = Date.now() - createdAt > SIX_MONTHS_MS;
-
-  if (normalizedProfile.plan === "free") {
-    if (trialExpired) return json(response, { message: "AI trial expired. Upgrade to Pro." }, 402);
-    if (normalizedProfile.ai_usage_weekly >= WEEKLY_LIMIT) return json(response, { message: "Weekly AI trial limit reached. Upgrade to Pro." }, 402);
-    if (normalizedProfile.ai_usage_total >= TOTAL_LIMIT) return json(response, { message: "Total AI trial limit reached. Upgrade to Pro." }, 402);
-    if (body.mode === "weekly") return json(response, { message: "Weekly Analysis is available on Pro." }, 402);
-    if (body.method !== "scalping") return json(response, { message: "This AI method is available on Pro." }, 402);
-  }
-
-  const usagePatch =
-    normalizedProfile.plan === "free"
-      ? {
-          ai_usage_weekly: normalizedProfile.ai_usage_weekly + 1,
-          ai_usage_total: normalizedProfile.ai_usage_total + 1,
-          ai_usage_reset_date: normalizedProfile.ai_usage_reset_date,
-        }
-      : {};
-
-  const result = await runOpenAIAnalysis(body);
-
-  if (normalizedProfile.plan === "free") {
-    await adminClient.from("profiles").update(usagePatch).eq("id", userData.user.id);
-  }
-
-  return json(response, result);
+function parseBody(body: unknown) {
+  if (typeof body === "string") return JSON.parse(body);
+  return body;
 }
 
 function resetWeeklyIfNeeded(profile: Profile): Profile {
@@ -91,37 +143,66 @@ function resetWeeklyIfNeeded(profile: Profile): Profile {
 }
 
 async function runOpenAIAnalysis(input: AIAnalysisInput): Promise<AIAnalysisOutput> {
-  if (!process.env.OPENAI_API_KEY) return fallbackResult;
+  if (!process.env.OPENAI_API_KEY) {
+    throw new Error("Missing OPENAI_API_KEY on the server");
+  }
 
-  const prompt = buildAnalysisPrompt(input);
-  const response = await fetch("https://api.openai.com/v1/chat/completions", {
+  const response = await fetch("https://api.openai.com/v1/responses", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
     },
     body: JSON.stringify({
-      model: "gpt-4o-mini",
+      model: OPENAI_MODEL,
       temperature: 0.2,
-      response_format: { type: "json_object" },
-      messages: [
-        { role: "system", content: `${prompt.basePrompt}\n${prompt.methodPrompt}` },
-        { role: "user", content: JSON.stringify(prompt.userInput) },
-      ],
+      instructions: `${basePrompt}\n${methodPrompts[input.method]}`,
+      input: JSON.stringify({
+        mode: input.mode,
+        symbol: input.pair,
+        timeframe: input.timeframe,
+        notes: input.notes || "No extra notes provided.",
+      }),
+      text: {
+        format: {
+          type: "json_schema",
+          name: "tradeintel_analysis",
+          strict: true,
+          schema: {
+            type: "object",
+            additionalProperties: false,
+            properties: {
+              bias: { type: "string", enum: ["buy", "sell"] },
+              entry: { type: "string" },
+              stop_loss: { type: "string" },
+              take_profit: { type: "string" },
+              confidence: { type: "string", enum: ["low", "medium", "high"] },
+              reason: { type: "string" },
+            },
+            required: ["bias", "entry", "stop_loss", "take_profit", "confidence", "reason"],
+          },
+        },
+      },
     }),
   });
 
-  if (!response.ok) return fallbackResult;
+  if (!response.ok) {
+    const errorText = await response.text();
+    throw new Error(`OpenAI request failed: ${response.status} ${errorText.slice(0, 240)}`);
+  }
 
   const data = await response.json();
-  const content = data.choices?.[0]?.message?.content;
-  if (!content) return fallbackResult;
+  const outputText = data.output_text || extractOutputText(data);
+  if (!outputText) throw new Error("OpenAI returned an empty response");
 
-  try {
-    return normalizeOutput(JSON.parse(content));
-  } catch {
-    return fallbackResult;
-  }
+  return normalizeOutput(JSON.parse(outputText));
+}
+
+function extractOutputText(data: any) {
+  return data.output
+    ?.flatMap((item: any) => item.content || [])
+    ?.find((content: any) => content.type === "output_text")
+    ?.text;
 }
 
 function normalizeOutput(value: Partial<AIAnalysisOutput>): AIAnalysisOutput {
@@ -137,7 +218,7 @@ function normalizeOutput(value: Partial<AIAnalysisOutput>): AIAnalysisOutput {
 
 function validateInput(input: AIAnalysisInput) {
   const methods = ["scalping", "smc", "trend", "breakout"];
-  if (!methods.includes(input.method)) return "Invalid analysis method";
+  if (!input || !methods.includes(input.method)) return "Invalid analysis method";
   if (!input.pair || input.pair.length > 20) return "Invalid pair";
   if (!input.timeframe || input.timeframe.length > 10) return "Invalid timeframe";
   if (input.notes && input.notes.length > 500) return "Notes are too long";
