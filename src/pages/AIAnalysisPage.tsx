@@ -1,5 +1,5 @@
 import { FormEvent, useMemo, useState } from "react";
-import { Bot, CheckCircle2, Lock, Sparkles } from "lucide-react";
+import { Bot, CheckCircle2, Crown, Lock, RefreshCw, Sparkles } from "lucide-react";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { TradingViewWidget } from "../components/TradingViewWidget";
@@ -15,7 +15,7 @@ const methods: Array<{ id: AnalysisMethod; title: string; description: string; p
 ];
 
 export function AIAnalysisPage() {
-  const { profile } = useAuth();
+  const { profile, refreshProfile } = useAuth();
   const [input, setInput] = useState<AIAnalysisInput>({ method: "scalping", pair: "XAUUSD", timeframe: "15m", notes: "", mode: "short-term" });
   const [result, setResult] = useState<AIAnalysisOutput | null>(null);
   const [loading, setLoading] = useState(false);
@@ -30,6 +30,7 @@ export function AIAnalysisPage() {
       weeklyPercent: Math.min((weekly / 3) * 100, 100),
       totalPercent: Math.min((total / 12) * 100, 100),
       locked: profile?.plan === "free" && (weekly >= 3 || total >= 12),
+      isPro: profile?.plan === "pro",
     };
   }, [profile]);
 
@@ -65,7 +66,11 @@ export function AIAnalysisPage() {
               <h2 className="text-lg font-bold">Short-Term Analysis</h2>
               <p className="mt-1 text-sm text-muted">Generate concise AI trade plans with controlled backend usage.</p>
             </div>
-            <Sparkles className="text-accent" />
+            <div className="flex items-center gap-3">
+              {usage.isPro && <span className="inline-flex items-center gap-1 rounded-lg bg-accent/15 px-2.5 py-1 text-xs font-semibold text-accent"><Crown size={14} /> Pro</span>}
+              <button type="button" className="rounded-lg border border-border p-2 text-muted transition hover:text-text" onClick={refreshProfile} aria-label="Refresh profile"><RefreshCw size={16} /></button>
+              <Sparkles className="text-accent" />
+            </div>
           </div>
 
           <form className="space-y-6" onSubmit={onSubmit}>
@@ -116,9 +121,18 @@ export function AIAnalysisPage() {
             </section>
 
             <section className="space-y-3">
-              <p className="text-sm font-semibold">Your AI Trial Usage</p>
-              <UsageBar label={`${Math.max(0, 3 - usage.weekly)} used this week`} value={usage.weeklyPercent} />
-              <UsageBar label={`Total ${usage.total} / 12 used`} value={usage.totalPercent} />
+              {usage.isPro ? (
+                <div className="rounded-xl border border-success/25 bg-success/10 p-4">
+                  <p className="flex items-center gap-2 text-sm font-semibold text-success"><Crown size={16} /> Pro AI Access</p>
+                  <p className="mt-1 text-xs leading-5 text-muted">Unlimited AI usage, all methods, weekly analysis, and AI history access.</p>
+                </div>
+              ) : (
+                <>
+                  <p className="text-sm font-semibold">Your AI Trial Usage</p>
+                  <UsageBar label={`${usage.weekly} / 3 used this week`} value={usage.weeklyPercent} />
+                  <UsageBar label={`Total ${usage.total} / 12 used`} value={usage.totalPercent} />
+                </>
+              )}
             </section>
 
             {error && <p className="rounded-xl border border-danger/30 bg-danger/10 p-3 text-sm text-danger">{error}</p>}

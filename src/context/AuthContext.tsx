@@ -12,6 +12,7 @@ interface AuthContextValue {
   signIn: (email: string, password: string) => Promise<void>;
   signUp: (email: string, password: string, fullName: string) => Promise<void>;
   signOut: () => Promise<void>;
+  refreshProfile: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue | undefined>(undefined);
@@ -31,6 +32,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(isSupabaseConfigured);
 
+  async function refreshProfile() {
+    if (!supabase || !user) {
+      if (!isSupabaseConfigured) setProfile(demoProfile);
+      return;
+    }
+
+    const { data, error } = await supabase.from("profiles").select("*").eq("id", user.id).single();
+    if (!error && data) setProfile(data as Profile);
+  }
+
   useEffect(() => {
     if (!supabase) return;
 
@@ -49,16 +60,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (!supabase || !user) return;
-
-    supabase
-      .from("profiles")
-      .select("*")
-      .eq("id", user.id)
-      .single()
-      .then(({ data, error }) => {
-        if (!error && data) setProfile(data as Profile);
-      });
+    refreshProfile();
   }, [user]);
 
   const value = useMemo<AuthContextValue>(
@@ -91,6 +93,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         });
         if (error) throw error;
       },
+      refreshProfile,
       async signOut() {
         if (!supabase) return;
         await supabase.auth.signOut();
