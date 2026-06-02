@@ -1,4 +1,4 @@
-import { BarChart3, Bot, BookOpen, LayoutDashboard, Settings, TrendingUp, X } from "lucide-react";
+import { BarChart3, Bot, BookOpen, Crown, LayoutDashboard, Settings, TrendingUp, X } from "lucide-react";
 import { NavLink } from "react-router-dom";
 import logo from "../../assets/tradeintel-logo.png";
 import { useAuth } from "../../context/AuthContext";
@@ -15,6 +15,7 @@ const navItems = [
 
 export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void }) {
   const { profile } = useAuth();
+  const isPro = profile?.plan === "pro";
 
   return (
     <>
@@ -62,11 +63,20 @@ export function Sidebar({ open, onClose }: { open: boolean; onClose: () => void 
         </nav>
 
         <div className="mt-auto space-y-4">
-          <div className="rounded-xl border border-border bg-card/60 p-4">
-            <p className="text-sm font-semibold text-text">Upgrade to Pro</p>
-            <p className="mt-1 text-xs leading-5 text-muted">Unlock unlimited AI analysis and weekly intelligence.</p>
-            <Button variant="ai" className="mt-4 w-full py-2 text-xs">Upgrade Now</Button>
-          </div>
+          {!isPro && (
+            <div className="rounded-xl border border-border bg-card/60 p-4">
+              <p className="text-sm font-semibold text-text">Upgrade to Pro</p>
+              <p className="mt-1 text-xs leading-5 text-muted">Unlock unlimited AI analysis and weekly intelligence.</p>
+              <Button variant="ai" className="mt-4 w-full py-2 text-xs">Upgrade Now</Button>
+            </div>
+          )}
+
+          {isPro && (
+            <div className="rounded-xl border border-accent/25 bg-accent/10 p-4">
+              <p className="flex items-center gap-2 text-sm font-semibold text-accent"><Crown size={16} /> Pro Workspace</p>
+              <p className="mt-1 text-xs leading-5 text-muted">Unlimited AI analysis and weekly intelligence are active.</p>
+            </div>
+          )}
 
           <div className="flex items-center gap-3 rounded-xl border border-border bg-card/55 p-3">
             <div className="grid h-10 w-10 place-items-center rounded-full bg-gradient-to-br from-primary to-accent text-sm font-bold">JT</div>
