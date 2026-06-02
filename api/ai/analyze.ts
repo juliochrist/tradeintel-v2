@@ -22,6 +22,12 @@ interface AIAnalysisInput {
   timeframe: string;
   notes: string;
   mode: "short-term" | "weekly";
+  current_price?: string;
+  market_structure?: "bullish" | "bearish" | "ranging";
+  key_level?: string;
+  liquidity_event?: "none" | "buy-side sweep" | "sell-side sweep" | "equal highs" | "equal lows";
+  session?: "asia" | "london" | "new-york" | "overlap";
+  news_risk?: "low" | "medium" | "high";
 }
 
 interface AIAnalysisOutput {
@@ -162,6 +168,12 @@ async function runOpenAIAnalysis(input: AIAnalysisInput): Promise<AIAnalysisOutp
         symbol: input.pair,
         timeframe: input.timeframe,
         notes: input.notes || "No extra notes provided.",
+        current_price: input.current_price || "not provided",
+        market_structure: input.market_structure || "not provided",
+        key_level: input.key_level || "not provided",
+        liquidity_event: input.liquidity_event || "not provided",
+        session: input.session || "not provided",
+        news_risk: input.news_risk || "not provided",
       }),
       text: {
         format: {
@@ -222,6 +234,8 @@ function validateInput(input: AIAnalysisInput) {
   if (!input.pair || input.pair.length > 20) return "Invalid pair";
   if (!input.timeframe || input.timeframe.length > 10) return "Invalid timeframe";
   if (input.notes && input.notes.length > 500) return "Notes are too long";
+  if (input.current_price && input.current_price.length > 40) return "Current price is too long";
+  if (input.key_level && input.key_level.length > 80) return "Key level is too long";
   return "";
 }
 

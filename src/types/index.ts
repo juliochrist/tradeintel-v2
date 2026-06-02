@@ -36,6 +36,12 @@ export interface AIAnalysisInput {
   timeframe: string;
   notes: string;
   mode: "short-term" | "weekly";
+  current_price?: string;
+  market_structure?: "bullish" | "bearish" | "ranging";
+  key_level?: string;
+  liquidity_event?: "none" | "buy-side sweep" | "sell-side sweep" | "equal highs" | "equal lows";
+  session?: "asia" | "london" | "new-york" | "overlap";
+  news_risk?: "low" | "medium" | "high";
 }
 
 export interface AIAnalysisOutput {
@@ -51,6 +57,16 @@ export interface AIAnalysisRecord extends AIAnalysisInput, AIAnalysisOutput {
   id: string;
   user_id: string;
   created_at: string;
+}
+
+export interface JournalDraft {
+  pair: string;
+  timeframe: string;
+  direction: Direction;
+  entry: number;
+  sl: number;
+  tp: number;
+  notes: string;
 }
 
 export interface AIUsageState {

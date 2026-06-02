@@ -1,11 +1,12 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Filter, Pencil, Plus, RefreshCw, Search, Trash2 } from "lucide-react";
+import { useLocation } from "react-router-dom";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { useAuth } from "../context/AuthContext";
 import { currency, formatDate } from "../lib/format";
 import { createTrade, deleteTrade, fetchTrades, updateTrade } from "../services/tradeService";
-import type { Direction, Trade, TradeResult } from "../types";
+import type { Direction, JournalDraft, Trade, TradeResult } from "../types";
 
 type TradeForm = Omit<Trade, "id" | "created_at" | "user_id">;
 
@@ -23,6 +24,7 @@ const emptyTrade: TradeForm = {
 
 export function JournalPage() {
   const { user } = useAuth();
+  const location = useLocation();
   const [trades, setTrades] = useState<Trade[]>([]);
   const [filter, setFilter] = useState<"all" | TradeResult>("all");
   const [query, setQuery] = useState("");
@@ -32,6 +34,23 @@ export function JournalPage() {
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState("");
+
+  useEffect(() => {
+    const draft = (location.state as { draft?: JournalDraft } | null)?.draft;
+    if (!draft) return;
+
+    setEditing(null);
+    setForm({
+      ...emptyTrade,
+      pair: draft.pair,
+      timeframe: draft.timeframe,
+      direction: draft.direction,
+      entry: draft.entry,
+      sl: draft.sl,
+      tp: draft.tp,
+      notes: draft.notes,
+    });
+  }, [location.state]);
 
   useEffect(() => {
     if (!user?.id) return;

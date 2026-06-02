@@ -1,5 +1,6 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { Bot, CheckCircle2, Clock, Crown, Lock, RefreshCw, Save, Sparkles, Trash2 } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { TradingViewWidget } from "../components/TradingViewWidget";
@@ -7,7 +8,7 @@ import { useAuth } from "../context/AuthContext";
 import { formatDate } from "../lib/format";
 import { deleteAIAnalysis, fetchAIAnalyses, saveAIAnalysis } from "../services/aiHistoryService";
 import { requestAIAnalysis } from "../services/aiService";
-import type { AIAnalysisInput, AIAnalysisOutput, AIAnalysisRecord, AnalysisMethod } from "../types";
+import type { AIAnalysisInput, AIAnalysisOutput, AIAnalysisRecord, AnalysisMethod, JournalDraft } from "../types";
 
 const methods: Array<{ id: AnalysisMethod; title: string; description: string; pro?: boolean }> = [
   { id: "scalping", title: "Scalping", description: "Short-term quick trades" },
@@ -18,7 +19,8 @@ const methods: Array<{ id: AnalysisMethod; title: string; description: string; p
 
 export function AIAnalysisPage() {
   const { profile, refreshProfile, user } = useAuth();
-  const [input, setInput] = useState<AIAnalysisInput>({ method: "scalping", pair: "XAUUSD", timeframe: "15m", notes: "", mode: "short-term" });
+  const navigate = useNavigate();
+  const [input, setInput] = useState<AIAnalysisInput>({ method: "scalping", pair: "XAUUSD", timeframe: "15m", notes: "", mode: "short-term", market_structure: "bullish", liquidity_event: "none", session: "london", news_risk: "low" });
   const [result, setResult] = useState<AIAnalysisOutput | null>(null);
   const [history, setHistory] = useState<AIAnalysisRecord[]>([]);
   const [loading, setLoading] = useState(false);
@@ -135,6 +137,22 @@ export function AIAnalysisPage() {
     });
   }
 
+  function createJournalDraft() {
+    if (!result) return;
+
+    const draft: JournalDraft = {
+      pair: input.pair,
+      timeframe: input.timeframe,
+      direction: result.bias,
+      entry: parseFirstPrice(result.entry),
+      sl: parseFirstPrice(result.stop_loss),
+      tp: parseFirstPrice(result.take_profit),
+      notes: `AI ${input.method} analysis: ${result.reason}`,
+    };
+
+    navigate("/journal", { state: { draft } });
+  }
+
   return (
     <div className="grid gap-6 xl:grid-cols-[1fr_400px]">
       <div className="space-y-6">
@@ -187,6 +205,38 @@ export function AIAnalysisPage() {
                   <span className="mb-2 block text-xs text-muted">Timeframe</span>
                   <select className="field" value={input.timeframe} onChange={(event) => setInput({ ...input, timeframe: event.target.value })}>
                     {["1m", "5m", "15m", "1h", "4h", "1d"].map((timeframe) => <option key={timeframe}>{timeframe}</option>)}
+                  </select>
+                </label>
+                <label>
+                  <span className="mb-2 block text-xs text-muted">Current Price</span>
+                  <input className="field" value={input.current_price ?? ""} onChange={(event) => setInput({ ...input, current_price: event.target.value })} placeholder="e.g. 1948.50" />
+                </label>
+                <label>
+                  <span className="mb-2 block text-xs text-muted">Key Level</span>
+                  <input className="field" value={input.key_level ?? ""} onChange={(event) => setInput({ ...input, key_level: event.target.value })} placeholder="e.g. 1945 demand" />
+                </label>
+                <label>
+                  <span className="mb-2 block text-xs text-muted">Structure</span>
+                  <select className="field" value={input.market_structure ?? "bullish"} onChange={(event) => setInput({ ...input, market_structure: event.target.value as AIAnalysisInput["market_structure"] })}>
+                    {["bullish", "bearish", "ranging"].map((item) => <option key={item}>{item}</option>)}
+                  </select>
+                </label>
+                <label>
+                  <span className="mb-2 block text-xs text-muted">Liquidity</span>
+                  <select className="field" value={input.liquidity_event ?? "none"} onChange={(event) => setInput({ ...input, liquidity_event: event.target.value as AIAnalysisInput["liquidity_event"] })}>
+                    {["none", "buy-side sweep", "sell-side sweep", "equal highs", "equal lows"].map((item) => <option key={item}>{item}</option>)}
+                  </select>
+                </label>
+                <label>
+                  <span className="mb-2 block text-xs text-muted">Session</span>
+                  <select className="field" value={input.session ?? "london"} onChange={(event) => setInput({ ...input, session: event.target.value as AIAnalysisInput["session"] })}>
+                    {["asia", "london", "new-york", "overlap"].map((item) => <option key={item}>{item}</option>)}
+                  </select>
+                </label>
+                <label>
+                  <span className="mb-2 block text-xs text-muted">News Risk</span>
+                  <select className="field" value={input.news_risk ?? "low"} onChange={(event) => setInput({ ...input, news_risk: event.target.value as AIAnalysisInput["news_risk"] })}>
+                    {["low", "medium", "high"].map((item) => <option key={item}>{item}</option>)}
                   </select>
                 </label>
               </div>
@@ -264,9 +314,14 @@ export function AIAnalysisPage() {
               </div>
               <ResultRow label="Confidence" value={result.confidence} tone="success" />
               <p className="rounded-xl border border-border bg-background/40 p-4 text-sm leading-6 text-muted">{result.reason}</p>
-              <Button variant="ghost" className="w-full" onClick={saveCurrentResult} disabled={!usage.isPro || savingHistory}>
-                <CheckCircle2 size={16} /> {savingHistory ? "Saving..." : "Save to AI History"}
-              </Button>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Button variant="ghost" className="w-full" onClick={saveCurrentResult} disabled={!usage.isPro || savingHistory}>
+                  <CheckCircle2 size={16} /> {savingHistory ? "Saving..." : "Save History"}
+                </Button>
+                <Button variant="ai" className="w-full" onClick={createJournalDraft}>
+                  Create Journal Draft
+                </Button>
+              </div>
             </div>
           ) : (
             <div className="grid min-h-72 place-items-center rounded-xl border border-dashed border-border text-center">
@@ -345,4 +400,9 @@ function ResultRow({ label, value, tone }: { label: string; value: string; tone?
       <p className={`mt-1 font-semibold capitalize ${tone === "success" ? "text-success" : tone === "danger" ? "text-danger" : "text-text"}`}>{value}</p>
     </div>
   );
+}
+
+function parseFirstPrice(value: string) {
+  const match = value.match(/-?d+(?:.d+)?/);
+  return match ? Number(match[0]) : 0;
 }
