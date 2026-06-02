@@ -47,6 +47,12 @@ export interface AIAnalysisOutput {
   reason: string;
 }
 
+export interface AIAnalysisRecord extends AIAnalysisInput, AIAnalysisOutput {
+  id: string;
+  user_id: string;
+  created_at: string;
+}
+
 export interface AIUsageState {
   allowed: boolean;
   reason?: string;

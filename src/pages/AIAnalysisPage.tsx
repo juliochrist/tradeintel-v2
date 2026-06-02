@@ -1,11 +1,13 @@
-import { FormEvent, useMemo, useState } from "react";
-import { Bot, CheckCircle2, Crown, Lock, RefreshCw, Sparkles } from "lucide-react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import { Bot, CheckCircle2, Clock, Crown, Lock, RefreshCw, Save, Sparkles, Trash2 } from "lucide-react";
 import { Button } from "../components/ui/Button";
 import { Card } from "../components/ui/Card";
 import { TradingViewWidget } from "../components/TradingViewWidget";
 import { useAuth } from "../context/AuthContext";
+import { formatDate } from "../lib/format";
+import { deleteAIAnalysis, fetchAIAnalyses, saveAIAnalysis } from "../services/aiHistoryService";
 import { requestAIAnalysis } from "../services/aiService";
-import type { AIAnalysisInput, AIAnalysisOutput, AnalysisMethod } from "../types";
+import type { AIAnalysisInput, AIAnalysisOutput, AIAnalysisRecord, AnalysisMethod } from "../types";
 
 const methods: Array<{ id: AnalysisMethod; title: string; description: string; pro?: boolean }> = [
   { id: "scalping", title: "Scalping", description: "Short-term quick trades" },
@@ -15,11 +17,16 @@ const methods: Array<{ id: AnalysisMethod; title: string; description: string; p
 ];
 
 export function AIAnalysisPage() {
-  const { profile, refreshProfile } = useAuth();
+  const { profile, refreshProfile, user } = useAuth();
   const [input, setInput] = useState<AIAnalysisInput>({ method: "scalping", pair: "XAUUSD", timeframe: "15m", notes: "", mode: "short-term" });
   const [result, setResult] = useState<AIAnalysisOutput | null>(null);
+  const [history, setHistory] = useState<AIAnalysisRecord[]>([]);
   const [loading, setLoading] = useState(false);
+  const [historyLoading, setHistoryLoading] = useState(false);
+  const [savingHistory, setSavingHistory] = useState(false);
+  const [deletingHistoryId, setDeletingHistoryId] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [historyError, setHistoryError] = useState("");
 
   const usage = useMemo(() => {
     const weekly = profile?.ai_usage_weekly ?? 1;
@@ -33,6 +40,29 @@ export function AIAnalysisPage() {
       isPro: profile?.plan === "pro",
     };
   }, [profile]);
+
+  useEffect(() => {
+    if (!user?.id || !usage.isPro) return;
+
+    let active = true;
+    setHistoryLoading(true);
+    setHistoryError("");
+
+    fetchAIAnalyses(user.id)
+      .then((records) => {
+        if (active) setHistory(records);
+      })
+      .catch((err) => {
+        if (active) setHistoryError(err instanceof Error ? err.message : "Failed to load AI history");
+      })
+      .finally(() => {
+        if (active) setHistoryLoading(false);
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [usage.isPro, user?.id]);
 
   async function onSubmit(event: FormEvent) {
     event.preventDefault();
@@ -57,11 +87,59 @@ export function AIAnalysisPage() {
     }
   }
 
+  async function saveCurrentResult() {
+    if (!user?.id || !result || savingHistory) return;
+
+    setSavingHistory(true);
+    setHistoryError("");
+
+    try {
+      const record = await saveAIAnalysis(user.id, input, result);
+      setHistory((current) => [record, ...current.filter((item) => item.id !== record.id)].slice(0, 20));
+    } catch (err) {
+      setHistoryError(err instanceof Error ? err.message : "Failed to save AI result");
+    } finally {
+      setSavingHistory(false);
+    }
+  }
+
+  async function removeHistory(id: string) {
+    setDeletingHistoryId(id);
+    setHistoryError("");
+
+    try {
+      await deleteAIAnalysis(id);
+      setHistory((current) => current.filter((item) => item.id !== id));
+    } catch (err) {
+      setHistoryError(err instanceof Error ? err.message : "Failed to delete AI history");
+    } finally {
+      setDeletingHistoryId(null);
+    }
+  }
+
+  function loadHistoryResult(record: AIAnalysisRecord) {
+    setInput({
+      method: record.method,
+      pair: record.pair,
+      timeframe: record.timeframe,
+      notes: record.notes,
+      mode: record.mode,
+    });
+    setResult({
+      bias: record.bias,
+      entry: record.entry,
+      stop_loss: record.stop_loss,
+      take_profit: record.take_profit,
+      confidence: record.confidence,
+      reason: record.reason,
+    });
+  }
+
   return (
     <div className="grid gap-6 xl:grid-cols-[1fr_400px]">
       <div className="space-y-6">
         <Card>
-          <div className="mb-6 flex items-center justify-between">
+          <div className="mb-6 flex items-center justify-between gap-4">
             <div>
               <h2 className="text-lg font-bold">Short-Term Analysis</h2>
               <p className="mt-1 text-sm text-muted">Generate concise AI trade plans with controlled backend usage.</p>
@@ -124,7 +202,7 @@ export function AIAnalysisPage() {
               {usage.isPro ? (
                 <div className="rounded-xl border border-success/25 bg-success/10 p-4">
                   <p className="flex items-center gap-2 text-sm font-semibold text-success"><Crown size={16} /> Pro AI Access</p>
-                  <p className="mt-1 text-xs leading-5 text-muted">Unlimited AI usage, all methods, weekly analysis, and AI history access.</p>
+                  <p className="mt-1 text-xs leading-5 text-muted">Unlimited AI usage, all methods, weekly analysis, and saved AI history.</p>
                 </div>
               ) : (
                 <>
@@ -168,7 +246,14 @@ export function AIAnalysisPage() {
         </Card>
 
         <Card>
-          <h2 className="mb-4 text-lg font-bold">AI Result</h2>
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <h2 className="text-lg font-bold">AI Result</h2>
+            {result && usage.isPro && (
+              <button className="rounded-lg border border-border p-2 text-muted transition hover:text-success disabled:opacity-50" onClick={saveCurrentResult} disabled={savingHistory} aria-label="Save AI result">
+                {savingHistory ? <RefreshCw size={16} className="animate-spin" /> : <Save size={16} />}
+              </button>
+            )}
+          </div>
           {result ? (
             <div className="space-y-4">
               <ResultRow label="Bias" value={result.bias.toUpperCase()} tone={result.bias === "buy" ? "success" : "danger"} />
@@ -179,7 +264,9 @@ export function AIAnalysisPage() {
               </div>
               <ResultRow label="Confidence" value={result.confidence} tone="success" />
               <p className="rounded-xl border border-border bg-background/40 p-4 text-sm leading-6 text-muted">{result.reason}</p>
-              <Button variant="ghost" className="w-full"><CheckCircle2 size={16} /> Save to Journal</Button>
+              <Button variant="ghost" className="w-full" onClick={saveCurrentResult} disabled={!usage.isPro || savingHistory}>
+                <CheckCircle2 size={16} /> {savingHistory ? "Saving..." : "Save to AI History"}
+              </Button>
             </div>
           ) : (
             <div className="grid min-h-72 place-items-center rounded-xl border border-dashed border-border text-center">
@@ -188,6 +275,52 @@ export function AIAnalysisPage() {
                 <p className="mt-3 font-semibold">No analysis yet</p>
                 <p className="mt-1 text-sm text-muted">Generate a plan to see structured JSON output.</p>
               </div>
+            </div>
+          )}
+        </Card>
+
+        <Card>
+          <div className="mb-4 flex items-center justify-between gap-3">
+            <div>
+              <h2 className="text-lg font-bold">AI History</h2>
+              <p className="mt-1 text-xs text-muted">Saved Pro analyses from newest to oldest.</p>
+            </div>
+            <Clock className="text-primary" />
+          </div>
+
+          {historyError && <p className="mb-3 rounded-xl border border-danger/30 bg-danger/10 p-3 text-sm text-danger">{historyError}</p>}
+
+          {!usage.isPro ? (
+            <div className="rounded-xl border border-border bg-background/40 p-4 text-sm text-muted">Upgrade to Pro to save and review AI history.</div>
+          ) : historyLoading ? (
+            <div className="grid place-items-center py-12 text-muted">
+              <RefreshCw className="mb-3 animate-spin text-primary" />
+              <p className="text-sm">Loading history...</p>
+            </div>
+          ) : history.length === 0 ? (
+            <div className="rounded-xl border border-dashed border-border p-6 text-center">
+              <p className="font-semibold">No saved analyses</p>
+              <p className="mt-1 text-sm text-muted">Generate and save your first AI result.</p>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              {history.map((record) => (
+                <div key={record.id} className="rounded-xl border border-border bg-background/40 p-4 transition hover:border-primary/50">
+                  <button className="w-full text-left" onClick={() => loadHistoryResult(record)}>
+                    <div className="flex items-start justify-between gap-3">
+                      <div>
+                        <p className="font-semibold">{record.pair} · {record.timeframe}</p>
+                        <p className="mt-1 text-xs capitalize text-muted">{record.method} · {formatDate(record.created_at)}</p>
+                      </div>
+                      <span className={record.bias === "buy" ? "text-sm font-bold uppercase text-success" : "text-sm font-bold uppercase text-danger"}>{record.bias}</span>
+                    </div>
+                    <p className="mt-3 line-clamp-2 text-sm leading-6 text-muted">{record.reason}</p>
+                  </button>
+                  <button className="mt-3 inline-flex items-center gap-2 text-xs text-muted transition hover:text-danger" onClick={() => removeHistory(record.id)} disabled={deletingHistoryId === record.id}>
+                    {deletingHistoryId === record.id ? <RefreshCw size={13} className="animate-spin" /> : <Trash2 size={13} />} Delete
+                  </button>
+                </div>
+              ))}
             </div>
           )}
         </Card>
